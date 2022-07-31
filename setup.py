@@ -12,7 +12,7 @@ setup(
     name='pw_control',
     version='0.1.0',
     description='Link and Create Pipewire Nodes',
-    url='https://github.com/simonstuder/pipewire_python',
+    url='https://github.com/simonstuder/pw_control',
     author='Simon Studer',
     author_email='s.studer.s@gmail.com',
     license='',
