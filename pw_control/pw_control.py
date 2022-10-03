@@ -466,7 +466,10 @@ class PW_Control:
 
             lines: list[str] = s.split("\n")
             typ: str = lines[0].split(" ")[0] # typ is 'Sink'
-            obs[lines[0]] = parsers[typ](lines[1:]) # lines[0] is 'Sink #96'
+            parsed = parsers[typ](lines[1:])
+            #obs[lines[0]] = parsed # lines[0] is 'Sink #96'
+            parsed["_pactl_sink_name"] = lines[0]
+            obs[parsed["Name"]] = parsed # lines[0] is 'Sink #96'
 
         return obs
 
