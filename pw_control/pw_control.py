@@ -3,62 +3,74 @@ import subprocess as sp
 import os
 import threading
 import time
+from typing import Any, Callable
+import logging
+from pprint import pprint
 
 
 # TODO:
 # - use Nodes
 
 def check_pw_link_installed():
-    output = exec_shell_cmd("pw-link --version")
+    output: str = exec_shell_cmd("pw-link --version")
     # TODO: check output if not installed
     return True
 
-def exec_shell_cmd(c):
-    p = sp.Popen(c, stdout=sp.PIPE, stderr=sp.PIPE, shell=True, encoding='utf-8')
+def exec_shell_cmd(c) -> str:
+    p: sp.Popen = sp.Popen(c, stdout=sp.PIPE, stderr=sp.PIPE, shell=True, encoding='utf-8')
     p.wait()
-    output = p.stdout.read() + p.stderr.read()
+    if p.stdout and p.stderr:
+        output: str = p.stdout.read() + p.stderr.read()
+    else:
+        raise BaseException("no stdout or stderr in exec_shell_cmd")
     return output
 
 
 class Port:
-    def __init__(self,names,id, type):
-        self.names = names
-        self.name = names[0]
-        self.id = id
-        self.type = type
+    def __init__(self,names:list[str], id:str, type:str) -> None:
+        self.names: list[str] = names
+        self.name: str = names[0]
+        self.id: str = id
+        self.type: str = type
 
-    def __str__(self):
-        return (f"Port [{self.id}] ({self.type}) {self.name}\n\t{self.names}")
+    def __str__(self) -> str:
+        #return (f"Port [{self.id}] ({self.type}) {self.name}\n\t{self.names}")
+        return (f"Port [{self.id}] ({self.type}) {self.name}")
 
-    def __repr(self):
-        return self.__str__(self)
+    def __repr__(self) -> str:
+        return str(self)
 
-    def __eq__(self,o):
+    def __eq__(self,o) -> bool:
         if o==None:
+            return False
+        if not isinstance(o,Port):
+            logging.warn(f"wrong type in Port comparison: {o!r}")
             return False
         return self.id==o.id
 
-    def connect(self, other, raiseOnError=True):
+    def connect(self, other, raiseOnError=True) -> None:
         if not self.type=="o":
             return
-        o = exec_shell_cmd(f"pw-link {self.name} {other.name}")
+        o: str = exec_shell_cmd(f"pw-link {self.name} {other.name}")
         if raiseOnError and "File exists" in o:
             raise Exception("This link exists already")
 
 
 
 class Link:
-    def __init__(self, id, p1, p2):
-        self.id = id
-        self.ports = [p1, p2]
+    def __init__(self, id:str, p1:Port, p2:Port) -> None:
+        self.id:str = id
+        self.ports: list[Port] = [p1, p2]
+        #logging.info("link init")
+        #logging.info(self.ports)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return (f"Link [{self.id}] [{self.ports[0].id}] {self.ports[0].name} -> [{self.ports[1].id}] {self.ports[1].name}")
 
-    def __repr(self):
-        return self.__str__(self)
+    def __repr__(self) -> str:
+        return str(self)
 
-    def __eq__(self,o):
+    def __eq__(self,o) -> bool:
         if o==None:
             return False
         return self.id==o.id and self.ports[0].id==o.ports[0].id and self.ports[1].id==o.ports[1].id
@@ -70,15 +82,21 @@ class Link:
 
 
 class PW_Control:
-    def __init__(self,monitorOutput="stdout"):
-        self.monitorOutputTarget = monitorOutput
-        self.monitorProcess = sp.Popen("pw-link -liom", stdout=sp.PIPE, stderr=sp.PIPE, shell=True, encoding='utf-8')
+    def __init__(self,monitorOutput:str="stdout"):
+        self.monitorOutputTarget:str = monitorOutput
+        self.monitorProcess: sp.Popen[str] = sp.Popen("pw-link -liom", stdout=sp.PIPE, stderr=sp.PIPE, shell=True, encoding='utf-8')
+        self.lastInitialMsg:float = -1
+        self.ports: dict[str, dict[int,Port]] = {}
+        self.links: dict[int,Link] = {}
 
-        def checkMonitor(p):
+        def checkMonitor() -> None:
             self.lastInitialMsg = time.time()
 
+            if not self.monitorProcess.stdout:
+                return
+
             for l in self.monitorProcess.stdout:
-                l = l.strip()
+                l:str = l.strip()
                 if l==None:
                     return
                 if l==b'':
@@ -91,7 +109,7 @@ class PW_Control:
 
                 self._monitorOutput(f"[PW_Monitor] {l}")
 
-        self.monitor_t = threading.Thread(target=checkMonitor,daemon=True,args=(self.monitorProcess,))
+        self.monitor_t: threading.Thread = threading.Thread(target=checkMonitor,daemon=True,args=())
         self.monitor_t.start()
         self.update_info()
 
@@ -99,19 +117,18 @@ class PW_Control:
             time.sleep(0.1)
         self._monitorOutput("[PW_Control] ready\n")
 
-    def _monitorOutput(self,v):
+    def _monitorOutput(self,v) -> None:
         if self.monitorOutputTarget=="stdout":
-            print(v)
+            logging.info(v)
 
-    def __str__(self):
-        s = "== Linker ==\n\n"+self.getAllPortsAsString()+self.getAllLinksAsString()
-        return s
+    def __str__(self) -> str:
+        return "== Linker ==\n\n"+self.getAllPortsAsString()+self.getAllLinksAsString()
 
-    def __repr__(self):
-        return self.__str__()
+    def __repr__(self) -> str:
+        return str(self)
 
-    def getAllPortsAsString(self):
-        s = "= Output Ports =\n"
+    def getAllPortsAsString(self) -> str:
+        s:str = "= Output Ports =\n"
         for p in self.ports["o"].values():
             s += str(p)+"\n"
         s += "\n= Input Ports =\n"
@@ -119,116 +136,114 @@ class PW_Control:
             s += str(p)+"\n"
         return s
 
-    def getAllLinksAsString(self):
-        s = "Links:\n"
+    def getAllLinksAsString(self) -> str:
+        s:str = "Links:\n"
         for l in self.links.values():
             s += str(l)+"\n"
         return s
 
-    def update_info(self):
+    def update_info(self) -> None:
         self.ports = self.get_ports()
         self.links = self.get_links()
 
-    def get_port(self,v,type="",return_multiple=False):
+    def get_port(self,v,type="") -> list[Port]:
         if isinstance(v,Port):
-            return v
+            return [v]
+
+        ret: list[Port] = []
         if isinstance(v,int):
             if type in ["o",""]:
                 if v in self.ports["o"]:
-                    return self.ports["o"][v]
+                    ret.append(self.ports["o"][v])
             if type in ["i",""]:
                 if v in self.ports["i"]:
-                    return self.ports["i"][v]
-            return None
+                    ret.append(self.ports["i"][v])
 
         if isinstance(v,str):
             if type in ["o",""]:
-                ps = self.search_ports_for_name(v,"o")
+                ps: list[Port] = self.search_ports_for_name(v,"o")
                 if len(ps)>0:
-                    if return_multiple and len(ps)>1:
-                        return ps
-                    return ps[0]
+                    ret += ps
             if type in ["i",""]:
-                ps = self.search_ports_for_name(v,"i")
+                ps: list[Port] = self.search_ports_for_name(v,"i")
                 if len(ps)>0:
-                    if return_multiple and len(ps)>1:
-                        return ps
-                    return ps[0]
-            return None
+                    ret += ps
+        return ret
 
-    def search_ports_for_name(self,n,type="o"):
-        ps = [p for p in self.ports[type].values() if p.name==n]
+    def search_ports_for_name(self,n,type="o") -> list[Port]:
+        ps: list[Port] = [p for p in self.ports[type].values() if p.name==n]
         if len(ps)>0:
             return ps
-        ps = [p for p in self.ports[type].values() if n in p.name]
+        ps: list[Port] = [p for p in self.ports[type].values() if n in p.name]
         return ps
 
-    def get_link(self,v1v,v2v=None,return_multiple=False):
+    def get_link(self,v1v,v2v=None) -> list[Link]:
 
         if isinstance(v1v,int) and v2v==None:
             if v1v in self.links:
-                return self.links[v1v]
-            return None
+                return [self.links[v1v]]
+            return []
         if isinstance(v1v,Link):
-            return v1v
+            return [v1v]
 
-        v1 = self.get_port(v1v,type="o",return_multiple=True)
-        if v1==None:
-            return None
-        if isinstance(v1,Port):
-            v1 = [v1]
-        #print([v.name for v in v1])
+        v1 = self.get_port(v1v,type="o")
+        if len(v1)==0:
+            return []
+        #logging.info(f"v1: {[f'{v.name}({v.id})' for v in v1]}")
 
-        v2 = self.get_port(v2v,type="i",return_multiple=True)
-        if v2==None:
-            return None
-        if isinstance(v2,Port):
-            v2 = [v2]
-        #print([v.name for v in v2])
+        v2 = self.get_port(v2v,type="i")
+        if len(v2)==0:
+            return []
+        #logging.info(f"v2: {[f'{v.name}({v.id})' for v in v2]}")
 
-        res = [l for l in self.links.values() if l.ports[0] in v1 and l.ports[1] in v2]
-        if len(res)>0:
-            if return_multiple and len(res)>1:
-                return res
-            return res[0]
+        return [l for l in self.links.values() if l.ports[0]==v1[0] and l.ports[1]==v2[0]]
 
-        return None
-
-    def connect(self,p1v,p2v=None,raiseOnError=True):
+    def connect(self,p1v,p2v=None,raiseOnError=True) -> Link|None:
         if isinstance(p1v, tuple):
             p2v = p1v[1]
             p1v = p1v[0]
 
         p1 = self.get_port(p1v,"o")
-        if raiseOnError and p1==None:
-            raise Exception(f"{p1v} does not exists or is not specific enough")
+        if len(p1)==0:
+            if raiseOnError:
+                raise Exception(f"{p1v} does not exists or is not specific enough")
+            return
         p2 = self.get_port(p2v,"i")
-        if raiseOnError and p2==None:
-            raise Exception(f"{p2v} does not exists or is not specific enough")
+        if len(p2)==0:
+            if raiseOnError:
+                raise Exception(f"{p2v} does not exists or is not specific enough")
+            return
 
-        p1.connect(p2,raiseOnError)
+        p1[0].connect(p2[0],raiseOnError)
 
         self.update_info()
 
-        return self.get_link(p1,p2)
+        created_link = self.get_link(p1[0],p2[0])
+        if len(created_link)<1:
+            raise Exception("created Link not found")
 
-    def disconnect(self,p1,p2=None,raiseOnError=True):
-        l = self.get_link(p1,p2)
-        if l==None:
+        return created_link[0]
+
+    def disconnect(self,p1,p2=None,raiseOnError=True) -> None:
+        ls: list[Link] = self.get_link(p1,p2)
+        if len(ls)==0:
             if raiseOnError:
                 raise Exception(f"Link {p1} {p2} does not exist")
             return
 
-        l.disconnect(raiseOnError)
+        logging.info("found links to disconnect")
+
+        for link in ls:
+            link.disconnect(raiseOnError)
 
         self.update_info()
 
 
 
-    def get_links(self):
+    def get_links(self) -> dict[int,Link]:
         outputs = [l.split() for l in exec_shell_cmd(f"pw-link -Il").strip().split(os.linesep)]
 
-        links = []
+        links: list[list[int]] = []
         for i in range(len(outputs)):
             if len(outputs[i])<1:
                 continue
@@ -238,21 +253,25 @@ class PW_Control:
             elif outputs[i][1] == '|->':
                 links.append([int(outputs[i][0]),int(outputs[i-1][0]), int(outputs[i][2])])
 
-        links_d = {}
+        links_d: dict[int, Link] = {}
         for l in links:
-            links_d[l[0]] = Link(l[0], self.get_port(l[1]), self.get_port(l[2]))
+            p1 = self.get_port(l[1])
+            p2 = self.get_port(l[2])
+            if len(p1)<1 or len(p2)<1:
+                continue
+            links_d[l[0]] = Link(str(l[0]), p1[0], p2[0])
 
         return links_d
 
-    def get_ports(self,which="all"):
-        which2arg = {'all': 'oi','i':'i','in':'i','inputs':'i','input':'i','o':'o','out':'o','output':'o','outputs':'o'}
+    def get_ports(self,which="all") -> dict[str, dict[int,Port]]:
+        which2arg: dict[str,str] = {'all': 'oi','i':'i','in':'i','inputs':'i','input':'i','o':'o','out':'o','output':'o','outputs':'o'}
         which = which2arg[which]
 
-        ports = {}
+        ports:dict[str,dict[int,Port]] = {}
         for v in which:
             outputs = [o.split() for o in exec_shell_cmd(f"pw-link -I{v}v").strip().split(os.linesep)]
 
-            last_port = 0
+            last_port:int = 0
             for i in range(len(outputs)):
                 if len(outputs[i])<1:
                     continue
@@ -263,7 +282,7 @@ class PW_Control:
 
             outputs = [o for o in outputs if o[0].isnumeric()]
 
-            out_ports = {}
+            out_ports:dict[int,Port] = {}
             for o in outputs:
                 out_ports[int(o[0])] = Port(o[1:], int(o[0]), v)
 
@@ -274,11 +293,12 @@ class PW_Control:
 
 
 
-    def create_sink(self,name="sink_name", channels=2, format=None, rate=None, channel_map=None, sink_properties=None, duplicates="ignore",waitForExisting=True):
+    def create_sink(self,name:str="sink_name", channels:int=2, format=None, rate=None, channel_map=None, sink_properties=None, duplicates:str="ignore",waitForExisting:bool=True) -> int:
+
         if not duplicates=="ignore":
-            sinks = self.get_sinks()
+            sinks: dict[str,Any] = self.get_sinks()
             for sn in sinks:
-                s = sinks[sn]
+                s: dict = sinks[sn]
                 if s["Name"]==name:
                     if duplicates=="Exception":
                         raise Exception(f"Sink with name {name} exists already")
@@ -286,24 +306,24 @@ class PW_Control:
                         return -1
 
 
-        cmd = f"pactl load-module module-null-sink sink_name={name} {'channels='+str(channels) if channels!=None else ''} {'format='+format if format!=None else ''} {'rate='+str(rate) if rate!=None else ''} {'channel_map='+channel_map if channel_map!=None else ''} {'sink_properties='+sink_properties if sink_properties!=None else ''}"
-        #print("running",cmd)
-        p = sp.Popen(cmd, shell=True, text=True, stdout=sp.PIPE, stderr=sp.PIPE)
+        cmd: str = f"pactl load-module module-null-sink sink_name={name} {'channels='+str(channels) if channels!=None else ''} {'format='+format if format!=None else ''} {'rate='+str(rate) if rate!=None else ''} {'channel_map='+channel_map if channel_map!=None else ''} {'sink_properties='+sink_properties if sink_properties!=None else ''}"
+        #logging.info("running",cmd)
+        p: sp.Popen[str] = sp.Popen(cmd, shell=True, text=True, stdout=sp.PIPE, stderr=sp.PIPE)
         p.wait()
-        c = p.communicate()
+        c: tuple[str,str] = p.communicate()
         if len(c[1])>0:
-            print("error")
-            print(c[1])
-            return
+            logging.error("error")
+            logging.error(c[1])
+            raise Exception(f"Sink could not be created, {c[1]}")
 
-        id = int(c[0].strip())
+        id: int = int(c[0].strip())
 
         if waitForExisting:
-            found = False
+            found: bool = False
             while not found:
-                sinks = self.get_sinks()
+                sinks: dict[str,Any] = self.get_sinks()
                 for sn in sinks:
-                    s = sinks[sn]
+                    s: dict = sinks[sn]
                     if s["Name"]==name:
                         found = True
                         break
@@ -311,20 +331,21 @@ class PW_Control:
 
         return id
 
-    def delete_sink(self,name="sink_name", waitForRemoved=True, handleNotExisting="ignore"):
-        print("delete_sink",name)
+    def delete_sink(self,name:str="sink_name", waitForRemoved:bool=True, handleNotExisting="ignore"):
+        logging.info("delete_sink",name)
 
         if not isinstance(name,int):
-            sinks = self.get_sinks()
+            sinks: dict[str,Any] = self.get_sinks()
 
-            sink = None
+            sink: dict|None = None
             for sn in sinks:
-                s = sinks[sn]
+                s: dict = sinks[sn]
                 if s["Name"]==name:
                     sink = s
                     break
 
             if sink==None:
+                logging.warn("sink not found")
                 if handleNotExisting=="ignore":
                     return
                 elif handleNotExisting=="stdout":
@@ -333,62 +354,63 @@ class PW_Control:
                 elif handleNotExisting=="Exception":
                     raise Exception("sink not found")
                 return
-            id = sink["Owner Module"]
+            id:str = sink["Owner Module"]
         else:
-            id = name
+            id:str = name
 
 
-        cmd = f"pactl unload-module {id}"
-        #print("running",cmd)
-        p = sp.Popen(cmd, shell=True, text=True, stdout=sp.PIPE, stderr=sp.PIPE)
+        cmd:str = f"pactl unload-module {id}"
+        #logging.info("running",cmd)
+        p:sp.Popen = sp.Popen(cmd, shell=True, text=True, stdout=sp.PIPE, stderr=sp.PIPE)
         p.wait()
-        c = p.communicate()
+        c: tuple[str,str] = p.communicate()
 
         if len(c[1]):
-            print("error")
-            print(c[1])
+            logging.error("error")
+            logging.error(c[1])
 
         if waitForRemoved:
-            found = True
+            found: bool = True
             while found:
                 found = False
-                sinks = self.get_sinks()
+                sinks: dict[str,Any] = self.get_sinks()
                 for sn in sinks:
-                    s = sinks[sn]
+                    s: dict = sinks[sn]
                     if s["Name"]==name:
                         found = True
                         break
                 time.sleep(0.1)
 
-    def delete_all_sinks(self,):
-        cmd = f"pactl unload-module module-null-sink"
-        p = sp.Popen(cmd, shell=True, text=True, stdout=sp.PIPE, stderr=sp.PIPE)
+    def delete_all_sinks(self) -> bool:
+        cmd: str = f"pactl unload-module module-null-sink"
+        p: sp.Popen = sp.Popen(cmd, shell=True, text=True, stdout=sp.PIPE, stderr=sp.PIPE)
         p.wait()
+        return True
 
-    def _parse_pactl_list(self,s):
-        l = s.split("\n\n")
+    def _parse_pactl_list(self,s) -> dict[str, Any]:
+        l: str = s.split("\n\n")
 
-        def parse_Sink(ls):
-            #print("parse_Sink")
+        def parse_Sink(ls) -> dict[str, Any]:
+            #logging.info("parse_Sink")
 
-            def parse_part(ls,rec_d = 0):
-                #print("parse_part")
-                o = {}
+            def parse_part(ls:list[str], rec_d:int = 0) -> tuple[Any,list[str]]:
+                #logging.info("parse_part")
+                o: dict = {}
                 if rec_d>30:
-                    print("recursion max reached")
+                    logging.warn("recursion max reached")
                     return o,ls
 
                 while len(ls)>0:
-                    l = ls[0]
-                    indent = len(l)-len(l.lstrip())
+                    l: str = ls[0] # first line
+                    indent: int = len(l)-len(l.lstrip())
 
                     # connect wrapped around lines
                     while len(ls)>1:
-                        nindent = len(ls[1])-len(ls[1].lstrip())
+                        nindent: int = len(ls[1])-len(ls[1].lstrip())
                         if nindent-indent>1:
-                            #print("connecting lines")
+                            #logging.info("connecting lines")
                             l += " "+ ls[1].lstrip()
-                            #print(l)
+                            #logging.debug(l)
                             if len(ls)>2:
                                 ls = [ls[0]]+ls[2:]
                             else:
@@ -396,30 +418,31 @@ class PW_Control:
                         else:
                             break
 
-                    l = l.lstrip()
+                    l:str = l.lstrip()
                     if ":" in l:
-                        doub = l.index(":")
+                        doub:int = l.index(":")
                     elif "=" in l:
-                        doub = l.index("=")
+                        doub:int = l.index("=")
                     else:
                         return l,ls
-                    k = l[0:doub]
-                    v = l[doub+2:]
+
+                    k:str = l[0:doub]
+                    v:str = l[doub+2:]
 
                     if len(v)>0:
-                        #print("key:",k,"\tv:",v)
+                        #logging.debug("key:",k,"\tv:",v)
                         o[k] = v
                     else:
                         v,ls = parse_part(ls[1:],rec_d+1)
-                        #print("after parse_part")
-                        #print("key:",k,"\tv:")
-                        #pprint(v)
-                        #print("rest")
-                        #print(ls)
+                        #logging.debug("after parse_part")
+                        #logging.debug("key:",k,"\tv:")
+                        #logging.debug(v)
+                        #logging.debug("rest")
+                        #logging.debug(ls)
                         o[k] = v
                     
                     if len(ls)>1:
-                        nindent = len(ls[1])-len(ls[1].lstrip())
+                        nindent:int = len(ls[1])-len(ls[1].lstrip())
                         if nindent<indent:
                             return o,ls
 
@@ -432,27 +455,28 @@ class PW_Control:
 
 
 
-        parsers = {
+        parsers: dict[str,Callable] = {
                 "Sink": parse_Sink
                 }
 
-        obs = {}
+        obs: dict[str, dict] = {}
         for s in l:
-            #print(s)
+            # s is the whole output of a Sink in pactl
+            #logging.debug(s)
 
-            lines = s.split("\n")
-            typ = lines[0].split(" ")[0]
-            obs[lines[0]] = parsers[typ](lines[1:])
+            lines: list[str] = s.split("\n")
+            typ: str = lines[0].split(" ")[0] # typ is 'Sink'
+            obs[lines[0]] = parsers[typ](lines[1:]) # lines[0] is 'Sink #96'
 
         return obs
 
-    def get_sinks(self,):
-        cmd = "pactl list sinks"
+    def get_sinks(self) -> dict[str,Any]:
+        cmd: str = "pactl list sinks"
         p = sp.Popen(cmd, shell=True, text=True, stdout=sp.PIPE, stderr=sp.PIPE)
         p.wait()
-        c = p.communicate()[0]
+        c: str = p.communicate()[0]
 
-        obs = self._parse_pactl_list(c)
+        obs: dict[str, Any] = self._parse_pactl_list(c)
 
         #pprint(obs,width=160)
         return obs
