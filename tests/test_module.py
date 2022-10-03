@@ -3,6 +3,7 @@ import pw_control.pw_control as PWC
 from pprint import pprint
 import time
 import logging
+from uuid import uuid4
 
 def test_true()->None:
     assert True
@@ -13,28 +14,41 @@ def test_execute_setup()->None:
     assert True
 
 def test_crete_sink()->None:
-    test_sink_name:str = "test_sink"
+    sink_name:str = f"test_sink_{uuid4()}"
     logging.basicConfig(level=logging.DEBUG)
     pwc:PWC.PW_Control = PWC.PW_Control(monitorOutput="None")
 
     pwc.delete_all_sinks()
     sinks:list[str] = list(pwc.get_sinks().keys())
-    assert test_sink_name not in sinks
-    pwc.create_sink(test_sink_name, channels=2,duplicates="ignore",waitForExisting=True)
+    assert sink_name not in sinks
+    pwc.create_sink(sink_name, channels=2,duplicates="Exception",waitForExisting=True)
     sinks:list[str] = list(pwc.get_sinks().keys())
-    assert test_sink_name in sinks
+    assert sink_name in sinks
+    pwc.delete_all_sinks()
+
+def test_delete_sink()->None:
+    sink_name:str = f"test_sink_{uuid4()}"
+    logging.basicConfig(level=logging.DEBUG)
+    pwc:PWC.PW_Control = PWC.PW_Control(monitorOutput="None")
+
+    pwc.create_sink(sink_name, channels=2,duplicates="Exception",waitForExisting=True)
+    sinks:list[str] = list(pwc.get_sinks().keys())
+    assert sink_name in sinks
+    pwc.delete_sink(sink_name, waitForRemoved=True, handleNotExisting="Exception")
+    sinks:list[str] = list(pwc.get_sinks().keys())
+    assert sink_name not in sinks
 
 def test_delete_all_sinks()->None:
-    test_sink_name:str = "test_sink"
+    sink_name:str = f"test_sink_{uuid4()}"
     logging.basicConfig(level=logging.DEBUG)
     pwc:PWC.PW_Control = PWC.PW_Control(monitorOutput="None")
 
     sinks:list[str] = list(pwc.get_sinks().keys())
-    pwc.create_sink(test_sink_name, channels=2,duplicates="ignore",waitForExisting=True)
+    pwc.create_sink(sink_name, channels=2,duplicates="Exception",waitForExisting=True)
     sinks:list[str] = list(pwc.get_sinks().keys())
-    assert test_sink_name in sinks
+    assert sink_name in sinks
     pwc.delete_all_sinks()
-    assert test_sink_name not in sinks
+    assert sink_name not in sinks
 
 def all():
 
