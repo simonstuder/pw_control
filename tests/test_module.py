@@ -1,7 +1,6 @@
 
 import pw_control.pw_control as PWC
 from pprint import pprint
-import time
 import logging
 from uuid import uuid4
 
@@ -11,7 +10,7 @@ def test_true()->None:
 def test_execute_setup()->None:
     logging.basicConfig(level=logging.DEBUG)
     pwc:PWC.PW_Control = PWC.PW_Control(monitorOutput="None")
-    assert True
+    assert not pwc==None
 
 def test_crete_sink()->None:
     sink_name:str = f"test_sink_{uuid4()}"
