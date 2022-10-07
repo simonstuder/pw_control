@@ -5,7 +5,10 @@ import threading
 import time
 from typing import Any, Callable
 import logging
-from pprint import pprint
+import re
+from re import Pattern,Match
+from pprint import pprint,pformat
+from dataclasses import dataclass
 
 
 # TODO:
@@ -25,6 +28,133 @@ def exec_shell_cmd(c) -> str:
         raise BaseException("no stdout or stderr in exec_shell_cmd")
     return output
 
+@dataclass
+class PactlString:
+    pass
+
+class PactlLine:
+    special_chars:list[str] = ['=',':','"']
+
+    def __init__(self,s:str) -> None:
+        self.line:str = s
+        self.indent:int = self._get_indent(s)
+        self.elements:dict[str,str] = {}
+
+        #logging.debug(f"line {self.line.lstrip()}")
+
+        while len(s)>0:
+            s = self._parse_next(s)
+        #logging.debug(f"got {self.elements}")
+
+    def _get_indent(self,s:str)->int:
+        return len(s)-len(s.lstrip())
+
+    def _parse_next(self,s:str)->str:
+        special_chars:list[str] = ['=',':','"'] if not 'k' in self.elements else ['"']
+        inds:list[tuple[int,str]] = list(filter(lambda x: x[0]>=0, map(lambda c: (s.index(c) if c in s else -1,c), special_chars)))
+        if len(inds)>0:
+            min_ind:tuple[int,str] = min(inds)
+            #logging.debug(min_ind)
+
+            if min_ind[1] in [':','='] and 'k' not in self.elements:
+                self.elements['k'] = s[:min_ind[0]].strip()
+                #logging.debug(f"got key: {self.elements['k']}")
+                return s[min_ind[0]+1:]
+            elif min_ind[1]=='"':
+                ns:str = s[min_ind[0]+1:]
+                end:int = ns.index('"')
+                self.elements['v'] = ns[:end].strip()
+                #logging.debug(f"got string: {self.elements['v']}")
+                return ns[end+1:].rstrip()
+
+        else:
+            self.elements['v'] = s.strip()
+            return ""
+
+        return ""
+
+    def __str__(self) -> str:
+        return f"{self.indent}\t{list(self.elements.keys())}\t{self.elements}"
+
+class PactlParser:
+    def parse(self,s)->dict[str,dict]:
+        #logging.debug("PactlParser.parse")
+        l: str = s.split("\n\n")
+        obs: dict[str, dict] = {}
+        for s in l:
+            # s is the whole output of a Sink in pactl
+            #logging.debug(s)
+
+            lines: list[str] = s.split("\n")
+            typ: str = lines[0].split(" ")[0] # typ is 'Sink'
+            if typ=="Sink":
+                parsed:dict[str,Any] = self.parse_Sink(lines[1:])
+            else:
+                logging.info(f"no type found or not implemented for {typ}")
+                continue
+            #obs[lines[0]] = parsed # lines[0] is 'Sink #96'
+            parsed["_pactl_sink_name"] = lines[0]
+            #sn = parsed["Name"]+'/'+lines[0]
+            sn = f"{parsed['Name']}/{parsed['Properties']['object.serial']}"
+            parsed["_pw_control_name"] = sn
+            obs[sn] = parsed
+            #break
+
+        #logging.debug("parse result")
+        #logging.debug(pformat(obs,indent=1,width=200,compact=False))
+
+        return obs
+
+
+    def parse_Sink(self,ls:list[str])->dict[str,Any]:
+        #logging.debug("parsing Sink")
+
+        lines:list[PactlLine] = list(map(lambda l: PactlLine(l),ls))
+        o:dict[str,Any] = {}
+        curr_keys:list[str] = []
+        last_indent:int = 0
+        for l in lines:
+            if l.indent-last_indent>1:
+                l.indent = last_indent+1
+            last_indent = l.indent
+            #logging.debug(l)
+
+            el:dict[str, Any] = o
+            i:int = 0
+            if 'k' in l.elements:
+                for i in range(l.indent-1):
+                    el = el[curr_keys[i]]
+            else:
+                for i in range(l.indent-2):
+                    el = el[curr_keys[i]]
+
+            if 'k' in l.elements and 'v' in l.elements:
+                el[l.elements['k']] = l.elements['v']
+                if len(curr_keys)<l.indent:
+                    curr_keys.append('')
+                #logging.debug(f"curr_keys: {curr_keys}")
+                curr_keys[l.indent-1] = l.elements['k']
+            elif 'k' in l.elements:
+                el[l.elements['k']] = {}
+                if len(curr_keys)<l.indent:
+                    curr_keys.append('')
+                #logging.debug(f"curr_keys: {curr_keys}")
+                curr_keys[l.indent-1] = l.elements['k']
+            elif 'v' in l.elements:
+                #logging.debug(f"v only: {l.elements['v']}")
+                #logging.debug(f"{pformat(el)}")
+                #logging.debug(f"{type(el)}")
+                #logging.debug(f"{pformat(el[curr_keys[i]])}")
+                if isinstance(el[curr_keys[i]], str):
+                    el[curr_keys[i]] += ' ' + str(l.elements['v'])
+                elif isinstance(el[curr_keys[i]], list):
+                    el[curr_keys[i]].append(l.elements['v'])
+                else:
+                    el[curr_keys[i]] = [l.elements['v']]
+
+            #logging.debug(pformat(o))
+
+        return o
 
 class Port:
     def __init__(self,names:list[str], id:str, type:str) -> None:
@@ -44,7 +174,7 @@ class Port:
         if o==None:
             return False
         if not isinstance(o,Port):
-            logging.warn(f"wrong type in Port comparison: {o!r}")
+            logging.warning(f"wrong type in Port comparison: {o!r}")
             return False
         return self.id==o.id
 
@@ -293,13 +423,17 @@ class PW_Control:
 
 
 
-    def create_sink(self,name:str="sink_name", channels:int=2, format=None, rate=None, channel_map=None, sink_properties=None, duplicates:str="ignore",waitForExisting:bool=True) -> int:
+    """
+    returns the name with which this new Sink will show up in the get_sinks() object if waitForExisting==True. Otherwise this value cannot be known and the Pulseaudio id will be returned. That value can be seen in get_sinks()['sink_name']['Properties']['pulse.module.id']
+    """
+    def create_null_sink(self,name:str="sink_name", channels:int=2, format=None, rate=None, channel_map=None, sink_properties=None, duplicates:str="ignore",waitForExisting:bool=True) -> str:
 
         if not duplicates=="ignore":
             sinks: dict[str,Any] = self.get_sinks()
             for sn in sinks:
                 s: dict = sinks[sn]
                 if s["Name"]==name:
+                    logging.warn(f"wanted to create a duplicate sink with name {name}")
                     if duplicates=="Exception":
                         raise Exception(f"Sink with name {name} exists already")
                     else:
@@ -319,20 +453,20 @@ class PW_Control:
         id: int = int(c[0].strip())
 
         if waitForExisting:
-            found: bool = False
-            while not found:
+            while True:
+                logging.debug(f"waiting for creation of sink {name} with id {id}")
                 sinks: dict[str,Any] = self.get_sinks()
                 for sn in sinks:
                     s: dict = sinks[sn]
-                    if s["Name"]==name:
-                        found = True
-                        break
-                time.sleep(0.1)
+                    logging.debug(f"got {sn} ({s['Name']})")
+                    if s["Name"] == name and 'Properties' in s and 'pulse.module.id' in s['Properties'] and int(s['Properties']['pulse.module.id'])==id:
+                        return s['_pw_control_name']
+                time.sleep(0.05)
 
-        return id
+        return str(id)
 
-    def delete_sink(self,name:str="sink_name", waitForRemoved:bool=True, handleNotExisting="ignore"):
-        logging.info("delete_sink",name)
+    def delete_null_sink(self,name:str="sink_name", waitForRemoved:bool=True, handleNotExisting="ignore"):
+        logging.info(f"delete_null_sink {name}")
 
         if not isinstance(name,int):
             sinks: dict[str,Any] = self.get_sinks()
@@ -340,7 +474,8 @@ class PW_Control:
             sink: dict|None = None
             for sn in sinks:
                 s: dict = sinks[sn]
-                if s["Name"]==name:
+                logging.debug(f"{s['Name']} == {name} ?")
+                if f"{s['Name']}/{s['Properties']['object.serial']}"==name:
                     sink = s
                     break
 
@@ -381,97 +516,23 @@ class PW_Control:
                         break
                 time.sleep(0.1)
 
+    def delete_all_null_sinks(self)->bool:
+        sinks:dict[str,Any] = self.get_sinks()
+        for sn in sinks:
+            #logging.debug(f"checking {sn}")
+            #logging.debug(pformat(sinks[sn]))
+            if sinks[sn]['Properties']['factory.name']=="support.null-audio-sink":
+                logging.debug(f"found null sink: {sn}")
+                logging.info(f"deleting sink {sn}")
+                #logging.info(pformat(sinks[sn]))
+                self.delete_null_sink(sn)
+        return True
+
     def delete_all_sinks(self) -> bool:
         cmd: str = f"pactl unload-module module-null-sink"
         p: sp.Popen = sp.Popen(cmd, shell=True, text=True, stdout=sp.PIPE, stderr=sp.PIPE)
         p.wait()
         return True
-
-    def _parse_pactl_list(self,s) -> dict[str, Any]:
-        l: str = s.split("\n\n")
-
-        def parse_Sink(ls) -> dict[str, Any]:
-            #logging.info("parse_Sink")
-
-            def parse_part(ls:list[str], rec_d:int = 0) -> tuple[Any,list[str]]:
-                #logging.info("parse_part")
-                o: dict = {}
-                if rec_d>30:
-                    logging.warn("recursion max reached")
-                    return o,ls
-
-                while len(ls)>0:
-                    l: str = ls[0] # first line
-                    indent: int = len(l)-len(l.lstrip())
-
-                    # connect wrapped around lines
-                    while len(ls)>1:
-                        nindent: int = len(ls[1])-len(ls[1].lstrip())
-                        if nindent-indent>1:
-                            #logging.info("connecting lines")
-                            l += " "+ ls[1].lstrip()
-                            #logging.debug(l)
-                            if len(ls)>2:
-                                ls = [ls[0]]+ls[2:]
-                            else:
-                                ls = [ls[0]]
-                        else:
-                            break
-
-                    l:str = l.lstrip()
-                    if ":" in l:
-                        doub:int = l.index(":")
-                    elif "=" in l:
-                        doub:int = l.index("=")
-                    else:
-                        return l,ls
-
-                    k:str = l[0:doub]
-                    v:str = l[doub+2:]
-
-                    if len(v)>0:
-                        #logging.debug("key:",k,"\tv:",v)
-                        o[k] = v
-                    else:
-                        v,ls = parse_part(ls[1:],rec_d+1)
-                        #logging.debug("after parse_part")
-                        #logging.debug("key:",k,"\tv:")
-                        #logging.debug(v)
-                        #logging.debug("rest")
-                        #logging.debug(ls)
-                        o[k] = v
-                    
-                    if len(ls)>1:
-                        nindent:int = len(ls[1])-len(ls[1].lstrip())
-                        if nindent<indent:
-                            return o,ls
-
-                    ls = ls[1:]
-
-                return o,ls
-
-            o,ls = parse_part(ls)
-            return o
-
-
-
-        parsers: dict[str,Callable] = {
-                "Sink": parse_Sink
-                }
-
-        obs: dict[str, dict] = {}
-        for s in l:
-            # s is the whole output of a Sink in pactl
-            #logging.debug(s)
-
-            lines: list[str] = s.split("\n")
-            typ: str = lines[0].split(" ")[0] # typ is 'Sink'
-            parsed = parsers[typ](lines[1:])
-            #obs[lines[0]] = parsed # lines[0] is 'Sink #96'
-            parsed["_pactl_sink_name"] = lines[0]
-            obs[parsed["Name"]] = parsed # lines[0] is 'Sink #96'
-
-        return obs
 
     def get_sinks(self) -> dict[str,Any]:
         cmd: str = "pactl list sinks"
@@ -479,7 +540,9 @@ class PW_Control:
         p.wait()
         c: str = p.communicate()[0]
 
-        obs: dict[str, Any] = self._parse_pactl_list(c)
+        #print(c.replace("\n",""))
+        #obs: dict[str, Any] = self._parse_pactl_list(c)
+        obs: dict[str, Any] = PactlParser().parse(c)
 
         #pprint(obs,width=160)
         return obs
