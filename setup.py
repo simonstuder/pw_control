@@ -11,14 +11,14 @@ with open(ver_path) as ver_file:
 setup(
     name='pw_control',
     version='0.1.0',
-    description='Link and Create Pipewire Nodes',
+    description='Create Pipewire Null Nodes and Link them with others',
     url='https://github.com/simonstuder/pw_control',
     author='Simon Studer',
     author_email='s.studer.s@gmail.com',
     license='',
     packages=['pw_control'],
     install_requires=['setuptools',
-                      'numpy',                     
+                      'numpy',
                       ],
 
     #use_scm_version=True,
@@ -29,11 +29,6 @@ setup(
         #'Intended Audience :: Science/Research',
         #'License :: OSI Approved :: BSD License',  
         'Operating System :: POSIX :: Linux',        
-        #'Programming Language :: Python :: 2',
-        #'Programming Language :: Python :: 2.7',
-        #'Programming Language :: Python :: 3',
-        #'Programming Language :: Python :: 3.4',
-        #'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.10',
     ],
 )

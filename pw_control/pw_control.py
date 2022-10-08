@@ -3,12 +3,9 @@ import subprocess as sp
 import os
 import threading
 import time
-from typing import Any, Callable
+from typing import Any
 import logging
-import re
-from re import Pattern,Match
-from pprint import pprint,pformat
-from dataclasses import dataclass
+from pprint import pformat
 
 
 # TODO:
@@ -27,10 +24,6 @@ def exec_shell_cmd(c) -> str:
     else:
         raise BaseException("no stdout or stderr in exec_shell_cmd")
     return output
-
-@dataclass
-class PactlString:
-    pass
 
 class PactlLine:
     special_chars:list[str] = ['=',':','"']
@@ -157,11 +150,11 @@ class PactlParser:
         return o
 
 class Port:
-    def __init__(self,names:list[str], id:str, type:str) -> None:
+    def __init__(self,names:list[str], id:str, typ:str) -> None:
         self.names: list[str] = names
         self.name: str = names[0]
         self.id: str = id
-        self.type: str = type
+        self.type: str = typ
 
     def __str__(self) -> str:
         #return (f"Port [{self.id}] ({self.type}) {self.name}\n\t{self.names}")
@@ -276,35 +269,42 @@ class PW_Control:
         self.ports = self.get_ports()
         self.links = self.get_links()
 
-    def get_port(self,v,type="") -> list[Port]:
+    def get_port(self,v:Port|list[Port]|int|str,typ="") -> list[Port]:
+        logging.debug(f"get_port {v}")
         if isinstance(v,Port):
             return [v]
 
+        if isinstance(v,list) and isinstance(v[0],Port):
+            return v
+
         ret: list[Port] = []
         if isinstance(v,int):
-            if type in ["o",""]:
+            if typ in ["o",""]:
                 if v in self.ports["o"]:
                     ret.append(self.ports["o"][v])
-            if type in ["i",""]:
+            if typ in ["i",""]:
                 if v in self.ports["i"]:
                     ret.append(self.ports["i"][v])
 
         if isinstance(v,str):
-            if type in ["o",""]:
+            if typ in ["o",""]:
                 ps: list[Port] = self.search_ports_for_name(v,"o")
                 if len(ps)>0:
                     ret += ps
-            if type in ["i",""]:
+            if typ in ["i",""]:
                 ps: list[Port] = self.search_ports_for_name(v,"i")
                 if len(ps)>0:
                     ret += ps
+        logging.debug(f"found ports: {ret}")
         return ret
 
-    def search_ports_for_name(self,n,type="o") -> list[Port]:
-        ps: list[Port] = [p for p in self.ports[type].values() if p.name==n]
+    def search_ports_for_name(self,n,typ="o") -> list[Port]:
+        logging.debug(f"search_ports_for_name({n},{typ})")
+        logging.debug(f"searching in {pformat(list(self.ports[typ].values()))}")
+        ps: list[Port] = [p for p in self.ports[typ].values() if p.name==n]
         if len(ps)>0:
             return ps
-        ps: list[Port] = [p for p in self.ports[type].values() if n in p.name]
+        ps: list[Port] = [p for p in self.ports[typ].values() if n in p.name]
         return ps
 
     def get_link(self,v1v,v2v=None) -> list[Link]:
@@ -316,12 +316,12 @@ class PW_Control:
         if isinstance(v1v,Link):
             return [v1v]
 
-        v1 = self.get_port(v1v,type="o")
+        v1 = self.get_port(v1v,typ="o")
         if len(v1)==0:
             return []
         #logging.info(f"v1: {[f'{v.name}({v.id})' for v in v1]}")
 
-        v2 = self.get_port(v2v,type="i")
+        v2 = self.get_port(v2v,typ="i")
         if len(v2)==0:
             return []
         #logging.info(f"v2: {[f'{v.name}({v.id})' for v in v2]}")
@@ -332,6 +332,8 @@ class PW_Control:
         if isinstance(p1v, tuple):
             p2v = p1v[1]
             p1v = p1v[0]
+
+        logging.info(f"connect({p1v} with {p2v}")
 
         p1 = self.get_port(p1v,"o")
         if len(p1)==0:
@@ -458,8 +460,8 @@ class PW_Control:
                 sinks: dict[str,Any] = self.get_sinks()
                 for sn in sinks:
                     s: dict = sinks[sn]
-                    logging.debug(f"got {sn} ({s['Name']})")
                     if s["Name"] == name and 'Properties' in s and 'pulse.module.id' in s['Properties'] and int(s['Properties']['pulse.module.id'])==id:
+                        logging.debug(f"found it {sn} ({s['Name']})")
                         return s['_pw_control_name']
                 time.sleep(0.05)
 
